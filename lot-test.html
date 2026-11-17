@@ -4,7 +4,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>NaviDriver Pro 地番テスト</title>
+<title>NaviDriver Pro 地番・GPSテスト</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <style>
 html,body,#map{height:100%;margin:0}
@@ -17,18 +17,41 @@ html,body,#map{height:100%;margin:0}
 <body>
 <div id="map"></div>
 <div id="panel">
-<b>地番データ読み込みテスト</b>
+<b>地番データ読み込みテスト ＋ GPS</b>
 <p><input type="file" id="file" accept=".json,application/json"></p>
 <div id="status">JSONファイルを選んでください</div>
+<div id="gps-status" role="status">GPS：位置情報を取得中…</div>
 </div>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
 const statusEl=document.getElementById("status");
+const gpsStatusEl=document.getElementById("gps-status");
 const map=L.map("map").setView([31.823,130.318],16);
 L.tileLayer("https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png",{
 attribution:"地理院タイル",maxZoom:24,maxNativeZoom:18
 }).addTo(map);
 const layer=L.layerGroup().addTo(map);
+let gpsMarker=null;
+let gpsAccuracy=null;
+let gpsCentered=false;
+if(!navigator.geolocation){
+ gpsStatusEl.textContent="GPS：このブラウザでは位置情報を利用できません";
+}else{
+ navigator.geolocation.watchPosition(function(p){
+  const pos=[p.coords.latitude,p.coords.longitude];
+  if(!gpsMarker){
+   gpsMarker=L.circleMarker(pos,{radius:8,color:"white",weight:3,fillColor:"red",fillOpacity:1}).addTo(map);
+  }else{gpsMarker.setLatLng(pos);}
+  if(Number.isFinite(p.coords.accuracy)){
+   if(!gpsAccuracy){gpsAccuracy=L.circle(pos,{radius:p.coords.accuracy,color:"red",weight:1,fillOpacity:0.06,interactive:false}).addTo(map);}
+   else{gpsAccuracy.setLatLng(pos);gpsAccuracy.setRadius(p.coords.accuracy);}
+  }
+  gpsStatusEl.textContent="GPS：現在地を取得しました（精度目安 約"+Math.round(p.coords.accuracy)+"m）";
+  if(!gpsCentered){map.setView(pos,Math.max(map.getZoom(),17));gpsCentered=true;}
+ },function(err){
+  gpsStatusEl.textContent="GPS：取得できません（"+err.message+"）";
+ },{enableHighAccuracy:true,maximumAge:0,timeout:15000});
+}
 document.getElementById("file").addEventListener("change",async function(){
 const file=this.files[0];
 if(!file)return;
