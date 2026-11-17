@@ -1,0 +1,60 @@
+
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NaviDriver Pro 地番テスト</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+html,body,#map{height:100%;margin:0}
+#map{position:absolute;inset:0}
+#panel{position:absolute;top:10px;left:10px;right:10px;z-index:1000;background:white;padding:12px;border-radius:10px;font:14px sans-serif}
+#file{max-width:100%}
+.lot-label{background:white;border:1px solid #555;border-radius:3px;padding:2px;font-weight:bold}
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="panel">
+<b>地番データ読み込みテスト</b>
+<p><input type="file" id="file" accept=".json,application/json"></p>
+<div id="status">JSONファイルを選んでください</div>
+</div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const statusEl=document.getElementById("status");
+const map=L.map("map").setView([31.823,130.318],16);
+L.tileLayer("https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png",{
+attribution:"地理院タイル",maxZoom:24,maxNativeZoom:18
+}).addTo(map);
+const layer=L.layerGroup().addTo(map);
+document.getElementById("file").addEventListener("change",async function(){
+const file=this.files[0];
+if(!file)return;
+try{
+const data=JSON.parse(await file.text());
+if(!Array.isArray(data.lots))throw Error("lotsがありません");
+layer.clearLayers();
+const bounds=[];
+let count=0;
+data.lots.forEach(v=>{
+const lat=Number(v.lat),lng=Number(v.lng);
+if(!Number.isFinite(lat)||!Number.isFinite(lng))return;
+const pos=[lat,lng];
+bounds.push(pos);
+const label=[v.name,v.lot].filter(Boolean).join(" / ");
+if(label)L.marker(pos).bindTooltip(label,{permanent:true,direction:"top"}).addTo(layer);
+else L.circleMarker(pos,{radius:3}).addTo(layer);
+if(Array.isArray(v.buildingCorners)&&v.buildingCorners.length>=3){
+L.polygon(v.buildingCorners,{color:"#0066cc",weight:2,fillOpacity:.1}).addTo(layer);
+}
+count++;
+});
+if(bounds.length)map.fitBounds(bounds,{padding:[20,20]});
+statusEl.textContent="読み込み成功："+count+"件";
+}catch(e){statusEl.textContent="読み込みエラー："+e.message}
+});
+</script>
+</body>
+</html>
