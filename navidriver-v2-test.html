@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>NaviDriver Pro｜表示・回転・GPS追従テスト</title>
+<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
+<style>
+html,body,#map{height:100%;width:100%;margin:0}body{font-family:-apple-system,BlinkMacSystemFont,"Helvetica Neue",sans-serif}#map{position:absolute;inset:0}
+#panel{position:absolute;z-index:5;top:calc(8px + env(safe-area-inset-top));left:8px;right:58px;max-width:460px;background:#fffffff0;border-radius:10px;padding:9px 11px;box-shadow:0 2px 10px #0002;font-size:12px;line-height:1.5}
+#panel strong{font-size:13px}#file{width:100%;font-size:12px;margin:5px 0}#status,#gps-status{overflow-wrap:anywhere}
+#controls{position:absolute;right:8px;top:calc(8px + env(safe-area-inset-top));z-index:6;display:grid;gap:7px}
+#controls button{border:1px solid #bbb;background:#fff;color:#222;border-radius:9px;min-width:44px;min-height:44px;padding:5px;font-size:12px;font-weight:700;box-shadow:0 2px 8px #0002}
+#controls button:disabled{opacity:.5}#follow.active{background:#e7f5e9;border-color:#419657}
+.lot-marker{pointer-events:none;display:flex;align-items:center;justify-content:center;min-width:12px;white-space:pre-line;text-align:center;line-height:1.08;text-shadow:0 1px 2px white,1px 0 2px white,-1px 0 2px white,0 -1px 2px white;color:#152c3a;font-weight:700}
+.lot-marker .inner{display:flex;flex-direction:column;gap:1px;align-items:center;justify-content:center}.lot-marker.vertical .inner{writing-mode:vertical-rl;text-orientation:mixed}
+.lot-marker .name,.lot-marker .lot{display:block;overflow-wrap:anywhere}
+#note{position:absolute;bottom:calc(8px + env(safe-area-inset-bottom));left:8px;z-index:4;background:#ffffffd9;padding:3px 6px;border-radius:5px;font-size:10px;color:#444}
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="panel"><strong>NaviDriver Pro｜新表示テスト</strong><input type="file" id="file" accept=".json,application/json"><div id="status">JSON未読み込み（端末内だけで処理）</div><div id="gps-status">GPS：取得待ち</div></div>
+<div id="controls"><button id="follow" class="active" title="現在地へ戻り自動追従">追従<br>ON</button><button id="north" title="北を上に戻す">北↑</button><button id="lots" title="登録地点の範囲を表示">地番<br>全体</button></div>
+<div id="note">2本指で回転｜手動移動すると追従停止</div>
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script>
+'use strict';
+const statusEl=document.getElementById('status'),gpsEl=document.getElementById('gps-status');
+const followButton=document.getElementById('follow');
+let follow=true,gps=null,gpsFirst=false,loadedBounds=null,markers=[];
+const map=new maplibregl.Map({container:'map',center:[130.318,31.823],zoom:16,bearing:0,pitch:0,dragRotate:true,touchZoomRotate:true,attributionControl:false,
+ style:{version:8,sources:{gsi:{type:'raster',tiles:['https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png'],tileSize:256,maxzoom:18,attribution:'国土地理院'}},layers:[{id:'gsi',type:'raster',source:'gsi'}]}});
+map.addControl(new maplibregl.AttributionControl({compact:true}),'bottom-right');
+function updateFollow(){followButton.classList.toggle('active',follow);followButton.innerHTML=follow?'追従<br>ON':'追従<br>OFF';}
+function pauseFollow(){if(follow){follow=false;updateFollow();}}
+// 利用者が地図を直接操作した場合だけ追従を止める（GPSによる移動では止めない）
+map.on('dragstart',pauseFollow);map.on('rotatestart',e=>{if(e.originalEvent)pauseFollow();});map.on('zoomstart',e=>{if(e.originalEvent)pauseFollow();});
+function autoPan(){
+ if(!follow||!gps||!map.loaded())return;
+ const p=map.project([gps.lng,gps.lat]),w=map.getCanvas().clientWidth,h=map.getCanvas().clientHeight;
+ if(w<1||h<1)return;
+ // 四辺の内側20%に入った時点で、安全領域の境界へ押し戻す
+ const x=Math.max(w*.2,Math.min(w*.8,p.x)),y=Math.max(h*.2,Math.min(h*.8,p.y));
+ const dx=x-p.x,dy=y-p.y;
+ if(Math.abs(dx)>1||Math.abs(dy)>1)map.panBy([dx,dy],{duration:350,essential:true});
+}
+function setGps(pos){
+ gps={lat:pos.coords.latitude,lng:pos.coords.longitude};
+ const point={type:'Feature',geometry:{type:'Point',coordinates:[gps.lng,gps.lat]},properties:{}};
+ const accuracy=Number.isFinite(pos.coords.accuracy)?Math.round(pos.coords.accuracy):null;
+ gpsEl.textContent='GPS：現在地取得'+(accuracy===null?'':'（精度目安 約'+accuracy+'m）');
+ if(map.getSource('gps-point'))map.getSource('gps-point').setData(point);
+ if(!gpsFirst){gpsFirst=true;if(follow)map.jumpTo({center:[gps.lng,gps.lat],zoom:Math.max(map.getZoom(),17)});}
+ else autoPan();
+}
+map.on('load',()=>{
+ map.addSource('buildings',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
+ map.addLayer({id:'building-fill',type:'fill',source:'buildings',paint:{'fill-color':'#2196d2','fill-opacity':.12}});
+ map.addLayer({id:'building-outline',type:'line',source:'buildings',paint:{'line-color':'#086eb4','line-width':2}});
+ map.addSource('gps-point',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
+ map.addLayer({id:'gps-dot',type:'circle',source:'gps-point',paint:{'circle-radius':9,'circle-color':'#e32636','circle-stroke-color':'#fff','circle-stroke-width':3}});
+ if(gps)setGps({coords:{latitude:gps.lat,longitude:gps.lng}});
+});
+if(navigator.geolocation){
+ gpsEl.textContent='GPS：位置情報を取得中…';
+ navigator.geolocation.watchPosition(setGps,e=>{gpsEl.textContent='GPS：'+e.message;},{enableHighAccuracy:true,maximumAge:0,timeout:15000});
+}else gpsEl.textContent='GPS：この端末では利用できません';
+followButton.addEventListener('click',()=>{follow=true;updateFollow();if(gps){map.easeTo({center:[gps.lng,gps.lat],duration:400});}});
+document.getElementById('north').addEventListener('click',()=>map.easeTo({bearing:0,duration:350}));
+document.getElementById('lots').addEventListener('click',()=>{if(loadedBounds){pauseFollow();map.fitBounds(loadedBounds,{padding:35,maxZoom:18,duration:400});}});
+function numeric(v,fallback){const n=Number(v);return Number.isFinite(n)?n:fallback;}
+function validPoint(p){return Array.isArray(p)&&p.length>=2&&Number.isFinite(Number(p[0]))&&Number.isFinite(Number(p[1]));}
+function markerFor(v){
+ const name=String(v.name||''),lot=String(v.lot||'');if(!name&&!lot)return null;
+ const el=document.createElement('div');el.className='lot-marker'+(v.vertical?' vertical':'');
+ const inner=document.createElement('div');inner.className='inner';
+ // 保存された倍率を基準サイズへ反映。元PC版の完全な書体・位置再現は別途照合が必要。
+ const nameSize=12*Math.max(.5,Math.min(3,numeric(v.nameFontPct,100)/100));
+ const lotSize=10*Math.max(.5,Math.min(3,numeric(v.lotFontPct,100)/100));
+ if(name){const n=document.createElement('span');n.className='name';n.style.fontSize=nameSize+'px';n.textContent=name;inner.appendChild(n);}
+ if(lot){const n=document.createElement('span');n.className='lot';n.style.fontSize=lotSize+'px';n.textContent=lot;inner.appendChild(n);}
+ inner.style.transform='rotate('+numeric(v.textRotationOffset,0)+'deg)';
+ el.appendChild(inner);
+ if(Number.isFinite(Number(v.labelWidth)))el.style.maxWidth=Math.max(20,Number(v.labelWidth))+'px';
+ return new maplibregl.Marker({element:el,anchor:'center',rotationAlignment:'map',pitchAlignment:'map'})
+  .setLngLat([Number(v.lng),Number(v.lat)]).addTo(map);
+}
+document.getElementById('file').addEventListener('change',async function(){
+ const file=this.files[0];if(!file)return;
+ try{
+  const data=JSON.parse(await file.text());if(!Array.isArray(data.lots))throw Error('lots配列がありません');
+  const nextMarkers=[],features=[],coords=[];let valid=0;
+  // 先にデータ検査し、失敗時は現在の表示を壊さない
+  const items=data.lots.filter(v=>Number.isFinite(Number(v.lat))&&Number.isFinite(Number(v.lng)));
+  for(const v of items){
+   coords.push([Number(v.lng),Number(v.lat)]);valid++;
+   if(Array.isArray(v.buildingCorners)&&v.buildingCorners.length>=3&&v.buildingCorners.every(validPoint)){
+    const ring=v.buildingCorners.map(p=>[Number(p[1]),Number(p[0])]);ring.push([...ring[0]]);
+    features.push({type:'Feature',properties:{},geometry:{type:'Polygon',coordinates:[ring]}});
+   }
+  }
+  markers.forEach(m=>m.remove());markers=[];
+  for(const v of items){const m=markerFor(v);if(m)nextMarkers.push(m);}
+  markers=nextMarkers;
+  map.getSource('buildings').setData({type:'FeatureCollection',features});
+  loadedBounds=coords.length?coords.reduce((b,p)=>b.extend(p),new maplibregl.LngLatBounds(coords[0],coords[0])):null;
+  statusEl.textContent='読み込み成功：'+valid+'件／建物枠 '+features.length+'件';
+  // GPSが取得済みなら現在地を優先。地番全体は専用ボタンで確認する。
+  if(!gps&&loadedBounds){pauseFollow();map.fitBounds(loadedBounds,{padding:35,maxZoom:18});}
+ }catch(e){statusEl.textContent='読み込みエラー：'+e.message;}
+});
+</script>
+</body>
+</html>
